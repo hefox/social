@@ -1,0 +1,45 @@
+<?php
+
+
+/**
+ * Implements hook_schema().
+ */
+function social_relationships_schema() {
+
+  $schema['connection_list'] = array(
+    'description' => 'Stores information for each connection list.',
+    'fields' => array(
+      'cid' => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique queue ID.',
+      ),
+      'name' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The name name of this queue.',
+      ),
+      'uid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+        'description' => 'The {users}.uid who created this queue.',
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp of the entity creation time.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('cid'),
+    'indexes' => array(
+      'uid' => array('uid'),
+    ),
+  );
+
+  return $schema;
+}

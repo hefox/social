@@ -1,6 +1,481 @@
 <?php
+
 /**
- * @file
+ *@file
+ * Implements the basic functionality for connections.
  */
 
-// Drupal needs this blank file.
+/**
+ * Implements hook_entity_info()
+ */
+function social_relationships_entity_info() {
+  $info['connection_list'] = array(
+    'label' => t('Connection List'),
+    'controller class' => 'ConnectionListController',
+    'base table' => 'connection_list',
+    'uri callback' => 'connection_list_uri',
+    'fieldable' => TRUE,
+    'entity keys' => array(
+      'id' => 'cid' ,
+    ),
+    'static cache' => TRUE,
+    'bundles' => array(
+      'connection_list' => array(
+        'label' => 'Connect Lists',
+        'admin' => array(
+          'path' => 'admin/structure/connection_list/manage',
+          'access arguments' => array('administer connection_list entities'),
+        ),
+      ),
+    ),
+    'view modes' => array(
+      'list' => array(
+        'label' => t('list'),
+        'custom settings' =>  FALSE,
+      ),
+    )
+  );
+
+  return $info;
+}
+
+/**
+ * Fetch a basic object.
+ *
+ * @param $cid
+ *   Integer specifying the connect list id.
+ * @param $reset
+ *   A boolean indicating that the internal cache should be reset.
+ * @return
+ *   A fully-loaded $basic object or FALSE if it cannot be loaded.
+ *
+ * @see connection_list_load_multiple()
+ * @see social_relationships_menu()
+ */
+function connection_list_load($cid = NULL, $reset = FALSE) {
+  $basic = connection_list_load_multiple(array_filter(array($cid)), $reset);
+  return $basic ? reset($basic) : FALSE;
+}
+
+/**
+ * Loads multiple connect lists.
+ */
+function connection_list_load_multiple($cids = FALSE, $conditions = array(), $reset = FALSE) {
+  return entity_load('connection_list', $cids, $conditions, $reset);
+}
+
+/**
+ * Implements the uri callback.
+ */
+function connection_list_uri($basic) {
+  return array(
+    'path' => 'connection/' . $basic->cid,
+  );
+}
+
+/**
+ * Implements hook_menu()
+ */
+function social_relationships_menu() {
+  $items['admin/structure/connection_list/manage'] = array(
+    'title' => 'Connection Lists',
+    'page callback' => 'connection_list_admin_page',
+    'access arguments' => array('administer connection_list entities'),
+    'page arguments' => array(FALSE),
+  );
+
+  $items['connection'] = array(
+    'title' => 'Your connection lists',
+    'page callback' => 'connection_list_admin_page',
+    'access arguments' => array('create connection_list entities'),
+    'page arguments' => array(TRUE),
+  );
+
+
+  $items['connection/%connection_list'] = array(
+    'title callback' => 'connection_list_title',
+    'title arguments' => array(1),
+    'page callback' => 'connection_list_view',
+    'page arguments' => array(1),
+    'access callback' => 'connection_list_access',
+    'access arguments' => array('edit', 1),
+  );
+
+  $items['connection/%connection_list/view'] = array(
+    'title' => 'View',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -10,
+  );
+
+  $items['connection/%connection_list/edit'] = array(
+    'title' => 'Edit',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('connection_list_form', 1),
+    'access callback' => 'connection_list_access',
+    'access arguments' => array('edit', 1),
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  $items['connection/add'] = array(
+    'title' => 'Add a connection list',
+    'page callback' => 'connection_list_add',
+    'access arguments' => array('create connection_list entities'),
+  );
+
+  return $items;
+}
+
+/**
+ * Tests basic access to creating/editing/viewing connection lists.
+ *
+ * @param $op
+ *   What operation to test for.
+ * @param $connect_list
+ *   The connection list entity.
+ * @param $account
+ *   The account to test access to. Defaults to current user.
+ *
+ * @return
+ *   TRUE if user can do operation, false otherwise.
+ */
+function connection_list_access($op, $connect_list, $account = NULL) {
+  if (!$account) {
+    global $user;
+    $account = $user;
+  }
+  // Test for valid input.
+  if (!in_array($op, array('delete', 'view', 'edit'))) {
+    return FALSE;
+  }
+
+  // Test if they can do anything.
+  if (user_access($op . ' any connection_list entity', $account)) {
+    return TRUE;
+  }
+  // Test for current user.
+  elseif ($connect_list->uid && $account->uid == $connect_list->uid && user_access($op . ' own connection_list entity', $account)) {
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Implements hook_permission()
+ */
+function social_relationships_permission() {
+  $permissions = array(
+    'administer connection_list entities' =>  array(
+      'title' => t('Administer connection list entities'),
+    ),
+    'view any connection_list entity' => array(
+      'title' => t('View any connection lists'),
+    ),
+    'edit any connection_list entity' => array(
+      'title' => t('Edit any connection lists'),
+    ),
+    'delete any connection_list entity' => array(
+      'title' => t('Delete any connection lists'),
+    ),
+    'create connection_list entities' => array(
+      'title' => t('Create connection lists'),
+    ),
+    'view own connect_list entity' => array(
+      'title' => t('View own connection lists'),
+    ),
+    'edit own connect_list entity' => array(
+      'title' => t('Edit own connection lists'),
+    ),
+    'delete own connect_list entity' => array(
+      'title' => t('Delete own connection lists'),
+    ),
+  );
+  return $permissions;
+}
+
+
+/**
+ * Provides a list of existing entities and the ability to add more. Tabs
+ * provide field and display management.
+ */
+function connection_list_admin_page($own = FALSE) {
+  $content = array();
+
+  $content[] = array(
+    '#type' => 'item',
+    '#markup' => l(t('Add a connection list'), 'connection/add'),
+  );
+
+  $content['table'] = connection_list_list_entities($own);
+
+  return $content;
+}
+
+/**
+ * Returns a render array with all connection_list entities.
+ */
+function connection_list_list_entities($own = FALSE) {
+  global $user;
+  $content = array();
+  if ($own && user_access('view own connect_list entity')) {
+    $entities = connection_list_load_multiple(FALSE, array('uid' => $user->uid));
+  }
+  elseif (!user_access('view any connection_list entity')) {
+    $content[] = array(
+      '#type' => 'item',
+      '#markup' => t('This user does not have permission to view connection_list entities.'),
+    );
+    return $content;
+  }
+  else {
+    $entities = connection_list_load_multiple();
+  }
+  if (!empty($entities)) {
+    foreach ( $entities as $entity ) {
+      $rows[] = array(
+        'data' => array(
+          'name' => l($entity->name, 'connection/' . $entity->cid),
+        ),
+      );
+    }
+    $content['entity_table'] = array(
+      '#theme' => 'table',
+      '#rows' => $rows,
+      '#header' => array(t('Name')),
+    );
+  }
+  else {
+    $content[] = array(
+      '#type' => 'item',
+      '#markup' => t('No connection lists currently exist.'),
+    );
+  }
+  return $content;
+}
+
+/**
+ * Callback for a page title when this entity is displayed.
+ */
+function connection_list_title($entity) {
+  return t('Connect List @name', array('@name' => $entity->name));
+}
+
+/**
+ * Function to display the entity.
+ */
+function connection_list_view($entity, $view_mode = 'list') {
+
+  $entity->content = array(
+    '#view_mode' => $view_mode,
+  );
+  field_attach_prepare_view('connection_list', array($entity->cid => $entity), $view_mode);
+  entity_prepare_view('connection_list', array($entity->cid => $entity));
+  $entity->content += field_attach_view('connection_list', $entity, $view_mode);
+
+  $type = 'connection_list';
+  drupal_alter(array('connection_list_view', 'entity_view'), $entity->content, $type);
+
+  return $entity->content;
+}
+
+/**
+ * Provides a wrapper on the edit form to add a new entity.
+ */
+function connection_list_add() {
+  $entity = entity_get_controller('connection_list')->create();
+  return drupal_get_form('connection_list_form', $entity);
+}
+
+/**
+ * Form function to create an connection_list entity.
+ */
+function connection_list_form($form, &$form_state, $entity) {
+  $form['name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Name'),
+    '#required' => TRUE,
+    '#default_value' => $entity->name,
+  );
+
+  $form['connection_list'] = array(
+    '#type' => 'value',
+    '#value' => $entity,
+  );
+
+  field_attach_form('connection_list', $entity, $form, $form_state);
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+    '#weight' => 100,
+  );
+  $form['delete'] = array(
+    '#type' => 'submit',
+    '#value' => t('Delete'),
+    '#submit' => array('connection_list_edit_delete'),
+    '#weight' => 200,
+  );
+
+  return $form;
+}
+
+
+/**
+ * Validation handler for connection_list_add_form form.
+ * We pass things straight through to the Field API to handle validation
+ * of the attached fields.
+ */
+function connection_list_form_validate($form, &$form_state) {
+  field_attach_form_validate('connection_list', $form_state['values']['connection_list'], $form, $form_state);
+}
+
+
+/**
+ * Form submit handler: submits basic_add_form information
+ */
+function connection_list_form_submit($form, &$form_state) {
+  $entity = $form_state['values']['connection_list'];
+  $entity->name = $form_state['values']['name'];
+  field_attach_submit('connection_list', $entity, $form, $form_state);
+  $entity = connection_list_save($entity);
+  $form_state['redirect'] = 'connection/' . $entity->cid;
+}
+
+/**
+ * Form deletion handler.
+ *
+ * @todo: 'Are you sure?' message.
+ */
+function connection_list_edit_delete( $form , &$form_state ) {
+  $entity = $form_state['values']['connection_list'];
+  connection_list_delete($entity);
+  drupal_set_message(t('The connect list %name has been deleted',
+    array('%name' => $entity->name))
+  );
+  $form_state['redirect'] = 'connection';
+}
+
+/**
+ * We save the entity by calling the controller.
+ */
+function connection_list_save(&$entity) {
+  return entity_get_controller('connection_list')->save($entity);
+}
+
+/**
+ * Use the controller to delete the entity.
+ */
+function connection_list_delete($entity) {
+  entity_get_controller('connection_list')->delete($entity);
+}
+
+/**
+ * ConnectionListControllerInterface definition.
+ *
+ * We create an interface here because anyone could come along and
+ * use hook_entity_info_alter() to change our controller class.
+ * We want to let them know what methods our class needs in order
+ * to function with the rest of the module, so here's a handy list.
+ *
+ * @see hook_entity_info_alter()
+ */
+
+interface ConnectionListControllerInterface
+  extends DrupalEntityControllerInterface {
+  public function create();
+  public function save($entity);
+  public function delete($entity);
+}
+
+/**
+ * ConnectionListController extends DrupalDefaultEntityController.
+ *
+ * Our subclass of DrupalDefaultEntityController lets us add a few
+ * important create, update, and delete methods.
+ */
+class ConnectionListController
+  extends DrupalDefaultEntityController
+  implements ConnectionListControllerInterface {
+
+  /**
+   * Create and return a new connection_list entity.
+   */
+  public function create() {
+    $entity = new stdClass();
+    $entity->type = 'connection_list';
+    $entity->cid = 0;
+    $entity->name = '';
+    return $entity;
+  }
+
+  /**
+   * Saves the custom fields using drupal_write_record()
+   */
+  public function save($entity) {
+    global $user;
+    if (empty($entity->cid)) {
+      $entity->created = time();
+      $entity->uid = $user->uid;
+    }
+    if (empty($entity->uid)) {
+      $entity->uid = $user->uid;
+    }
+    module_invoke_all('entity_presave', 'connection_list', $entity);
+    $primary_keys = $entity->cid ? 'cid' : array();
+    drupal_write_record('connection_list', $entity, $primary_keys);
+    $invocation = 'entity_insert';
+    if (empty($primary_keys)) {
+      field_attach_insert('connection_list', $entity);
+    }
+    else {
+      field_attach_update('connection_list', $entity);
+      $invocation = 'entity_update';
+    }
+    // Invoke either hook_entity_update() or hook_entity_insert().
+    module_invoke_all($invocation, 'connection_list', $entity);
+    return $entity;
+  }
+
+  /**
+   * Delete a single entity.
+   *
+   * Really a convenience function for delete_multiple().
+   */
+  public function delete($entity) {
+    $this->delete_multiple(array($entity));
+  }
+
+  /**
+   * Delete one or more connection_list entities.
+   *
+   * Deletion is unfortunately not supported in the base
+   * DrupalDefaultEntityController class.
+   *
+   * @param $cids
+   *   An array of entity IDs or a single numeric ID.
+   */
+  public function delete_multiple($entities) {
+    $cids = array();
+    if (!empty($entities)) {
+      $transaction = db_transaction();
+      try {
+        foreach ($entities as $entity) {
+          module_invoke_all('connection_list_delete', $entity);
+          // Invoke hook_entity_delete().
+          module_invoke_all('entity_delete', $entity, 'connection_list');
+          field_attach_delete('connection_list', $entity);
+          $cids[] = $entity->cid;
+        }
+        db_delete('connection_list')
+          ->condition('cid', $cids, 'IN')
+          ->execute();
+
+      }
+      catch (Exception $e) {
+        $transaction->rollback();
+        watchdog_exception('social_relationships', $e);
+        throw $e;
+      }
+    }
+  }
+}

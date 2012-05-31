@@ -1,0 +1,6 @@
+name = Social Relationships
+core = 7.x
+package = Features
+dependencies[] = user_relationships
+features[features_api][] = api:1
+features[user_relationship][] = friend

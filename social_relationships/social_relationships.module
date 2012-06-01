@@ -479,3 +479,36 @@ class ConnectionListController
     }
   }
 }
+
+/**
+ * Grab all friends of the user
+ */
+function social_relationships_get_friends($uid, $reset = FALSE) {
+  $lists = drupal_static(__FUNCTION__, array());
+  if (!isset($lists[$uid]) || $reset) {
+    $lists[$uid] = db_select('user_relationships')
+      ->fields('user_relationships', array('requester_id'))
+      ->condition('requestee_id', $uid, '=')
+      ->condition('approved', 1, '=')
+      ->execute()
+      ->fetchCol();
+  }
+  return $lists[$uid];
+}
+
+
+
+/**
+ * Grabs all the connection lists a user is in.
+ */
+function connection_list_get_connection_lists($uid, $reset = FALSE) {
+  $lists = drupal_static(__FUNCTION__, array());
+  if (!isset($lists[$uid]) || $reset) {
+    $lists[$uid] = db_select('field_data_field_friends')
+      ->fields('field_data_field_friends', array('entity_id'))
+      ->condition('field_friends_target_id', $uid, '=')
+      ->execute()
+      ->fetchCol();
+  }
+  return $lists[$uid];
+}

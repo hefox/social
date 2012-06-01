@@ -1,0 +1,70 @@
+<?php
+
+
+/**
+ *@file
+ * Implements the basic functionality for connection access.
+ */
+
+/**
+ * Implements hook_schema_alter().
+ */
+function connection_node_access_schema_alter(&$schema) {
+  // Add field to existing schema.
+  $schema['node']['fields']['connection_node_access'] = array(
+    'type' => 'int', 
+    'not null' => TRUE, 
+    'default' => 0, 
+    'description' => 'Settings for connection node access.',
+  );
+  $schema['node']['indexes']['connection_node_access'] = array('connection_node_access');
+}
+
+/**
+ * Implements hook_install().
+ */
+function connection_node_access_install() {
+  $schema = array();
+  connection_node_access_schema_alter($schema);
+  db_add_field('node', 'connection_node_access', $schema['node']['fields']['connection_node_access'], $schema['node']['indexes']);
+}
+
+/**
+ * Implements hook_schema().
+ */
+function connection_node_access_schema() {
+  $schema['connection_node_access_lists'] = array(
+    // example (partial) specification for table "node"
+    'description' => 'The base table for nodes.', 
+    'fields' => array(
+      'nid' => array(
+        'description' => 'The identifier for a node.', 
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE,
+      ), 
+      'cid' => array(
+        'description' => 'The connection id', 
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE, 
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array(
+      'nid' => array('nid'),
+      'cid' => array('cid'),
+    ),
+    'foreign keys' => array(
+      'node' => array(
+        'table' => 'node', 
+        'columns' => array('nid' => 'nid'),
+      ), 
+      'connection_list' => array(
+        'table' => 'connection_list', 
+        'columns' => array('cid' => 'cid'),
+      ),
+    ), 
+  );
+  return $schema;
+}

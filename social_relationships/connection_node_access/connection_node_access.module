@@ -1,0 +1,174 @@
+<?php
+
+define('CONNECT_NODE_ACCESS_PUBLIC', 0);
+define('CONNECT_NODE_ACCESS_FRIENDS', 1);
+define('CONNECT_NODE_ACCESS_CONNECTIONS', 2);
+define('CONNECT_NODE_ACCESS_NOONE', 3);
+
+/**
+ * Implement hook_query_TAG_alter().
+ *
+ * This takes care of nodes in listing pages, sidebar blocks, and so on. These
+ * do not trigger the full set of hook_node_XXX functions, for performance
+ * reasons.
+ */
+function connection_node_access_query_node_access_alter(QueryAlterableInterface $query) {
+  global $user;
+
+  // If we haven't joined on the node table yet, do so.
+  $tables = $query->getTables();
+  $node_exists = FALSE;
+  foreach ($tables as $alias => $table) {
+    if ($table['table'] == 'node') {
+      $node_exists = TRUE;
+      break;
+    }
+  }
+
+  if (!$node_exists) {
+    $query->join('node', 'n', 'n.nid = ' . key($tables) . '.nid');
+    $alias = 'n';
+  }
+
+  // Restrict to showing only what types the user has access to view.
+  if ($user->uid) {
+    $alias = check_plain($alias);
+    $args = array(
+      ':public' => CONNECT_NODE_ACCESS_PUBLIC,
+      ':uid' => $user->uid,
+    );
+    // @TODO get rtid.
+    $new_query = $alias . '.connection_node_access = :public OR ' . $alias . '.uid = :uid ';
+    if ($friends = social_relationships_get_friends($user->uid)) {
+      $new_query .= 'OR (' . $alias . '.connection_node_access = :friends AND ' . $alias .'.uid IN (:friends_list))';
+      $args[':friends'] = CONNECT_NODE_ACCESS_FRIENDS;
+      $args[':friends_list'] = $friends;
+    }
+    if ($lists = connection_list_get_connection_lists($user->uid)) {
+      // Avoids duplicates, but how's the performance?
+      $connection_query = '(SELECT nid from connection_node_access_lists where cid in (:lists))';
+      $new_query .= 'OR (' . $alias . '.connection_node_access = :connections AND ' . $alias .'.nid IN ' . $connection_query .')';
+      $args[':connections'] = CONNECT_NODE_ACCESS_CONNECTIONS;
+      $args[':lists'] = $lists;
+    }
+    $query->where($new_query, $args);
+  }
+  else {
+    $query->where($alias . '.connection_node_access = :status', array(':status' => CONNECT_NODE_ACCESS_PUBLIC));
+  }
+}
+
+/**
+ * Implement hook_node_access().
+ */
+function connection_node_access_node_access($node, $op, $account) {
+  if ($op == 'view') {
+    switch ($node->connection_node_access) {
+      case CONNECT_NODE_ACCESS_PUBLIC:
+        return NODE_ACCESS_ALLOW;
+      case CONNECT_NODE_ACCESS_NOONE;
+        return $account->uid == $node->uid ? NODE_ACCESS_ALLOW : NODE_ACCESS_DENY;
+      case CONNECT_NODE_ACCESS_FRIENDS;
+        return in_array($account->uid, social_relationships_get_friends($node->uid)) ? NODE_ACCESS_ALLOW : NODE_ACCESS_DENY;
+      case CONNECT_NODE_ACCESS_CONNECTIONS:
+        return array_intersect(connection_list_get_connection_lists($account->uid), connect_node_access_get_connection_lists($node->nid)) ? NODE_ACCESS_ALLOW : NODE_ACCESS_DENY;
+    }
+    return NODE_ACCESS_DENY;
+  }
+}
+
+/**
+ * Implements hook_form_BASE_FORM_ID_alter() for node_form.
+ */
+function connection_node_access_form_node_form_alter(&$form, $form_state) {
+  global $user;
+  if (empty($form['#node']->uid)) {
+    return;
+  }
+  $node = $form['#node'];
+  $form['connection_node_access'] = array(
+    '#type' => 'fieldset', 
+    '#title' => t('Access Settings'), 
+    '#collapsible' => TRUE, 
+    '#collapsed' => TRUE, 
+    '#group' => 'additional_settings', 
+    '#weight' => 20,
+  );
+  $form['connection_node_access']['connection_node_access'] = array(
+    '#type' => 'radios',
+    '#title' => t('Access'),
+    '#title_display' => 'invisible', 
+    '#default_value' => !empty($node->connection_node_access) ? $node->connection_node_access : 0, 
+    '#options' => array(
+      CONNECT_NODE_ACCESS_PUBLIC => t('Everyone'), 
+      CONNECT_NODE_ACCESS_FRIENDS => t('Friends'), 
+      CONNECT_NODE_ACCESS_CONNECTIONS => t('Connection Lists'),
+      CONNECT_NODE_ACCESS_NOONE => t('Only me (private)')
+    ),
+    CONNECT_NODE_ACCESS_PUBLIC => array(
+      '#description' => t('Anyone may view this content.'),
+    ),
+    CONNECT_NODE_ACCESS_FRIENDS => array(
+      '#description' => t('Only your friends can view this content.'),
+    ),
+    CONNECT_NODE_ACCESS_CONNECTIONS => array(
+      '#description' => t('Specify what connection lists may view this content.'),
+    ),
+    CONNECT_NODE_ACCESS_NOONE => array(
+      '#description' => t('Only you may view.'),
+    ),
+  );
+  if ($lists = connection_list_load_multiple(FALSE, array('uid' => $node->uid))) {
+    $options = array();
+    foreach ($lists as $connection) {
+      $options[$connection->cid] = check_plain($connection->name);
+    }
+    $form['connection_node_access']['connection_node_access_lists'] = array(
+      '#title' => t('Connection Lists'),
+      '#options' => $options,
+      '#type' => 'checkboxes',
+      '#default_value' => !empty($node->nid) ? connect_node_access_get_connection_lists($node->nid) : array(),
+    );
+  }
+  else {
+    unset($form['connection_node_access']['#options'][CONNECT_NODE_ACCESS_CONNECTIONS]);
+  }
+}
+
+/**
+ * Fetch the list of allowed connection groups for this node.
+ */
+function connect_node_access_get_connection_lists($nid) {
+  return db_select('connection_node_access_lists')
+    ->fields('connection_node_access_lists', array('cid'))
+    ->condition('nid', $nid, '=')
+    ->execute()
+    ->fetchCol();
+}
+
+/**
+ * Implements hook_node_insert().
+ */
+function connection_node_access_node_insert($node) {
+  if (!empty($node->connection_node_access_lists) && ($cids = array_filter($node->connection_node_access_lists))) {
+    $insert = array();
+    $query = db_insert('connection_node_access_lists')
+      ->fields(array('cid', 'nid'));
+    foreach ($cids as $cid) {
+      $query->values(array('nid' => $node->nid, 'cid' => $cid));
+    }
+    $query->execute();
+  }
+}
+
+/**
+ * Implements hook_node_update().
+ */
+function connection_node_access_node_update($node) {
+  if (isset($node->connection_node_access_lists)) {
+    db_delete('connection_node_access_lists')->
+      condition('nid', $node->nid, '=')
+      ->execute();
+    connection_node_access_node_insert($node);
+  }
+}

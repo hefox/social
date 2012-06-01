@@ -1,0 +1,5 @@
+name = Social Connections Node Access
+core = 7.x
+package = Social
+php = 5.2.4
+dependencies[] = social_relationships
